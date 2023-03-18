@@ -3,3 +3,5 @@ __pycache__
 Tmp
 Data/202**/*.*
 Data/mat
+logs/**
+Data/keras_log/**
