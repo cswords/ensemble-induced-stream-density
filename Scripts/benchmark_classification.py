@@ -28,9 +28,9 @@ datasets = [
     # "control",
     # "dermatology",
     # "diabetesC",
-    "ecoli",
+    # "ecoli",
     # "glass",
-    "hard",
+    # "hard",
     # "hill",
     # "ILPD",
     # "Ionosphere",
@@ -38,9 +38,9 @@ datasets = [
     # "isolet",
     # "libras",
     # "liver",
-    "LSVT",
+    # "LSVT",
     # "musk",
-    "Parkinsons",
+    # "Parkinsons",
     # # "Pendig",
     # "pima",
     # "s1",
@@ -53,7 +53,7 @@ datasets = [
     # "SPECTF",
     # "thyroid",
     # "user",
-    "vowel",
+    # "vowel",
     # "WDBC",
     # "wine",
 ]
@@ -64,7 +64,7 @@ def prepare(ds, batch_size=64):
 
 
 train_split_rate = 0.8
-t = 1024
+t = 16  # 256
 
 if __name__ == "__main__":
     np.set_printoptions(precision=4, suppress=True, linewidth=150)
