@@ -4,6 +4,25 @@ from scipy.sparse.csgraph import connected_components
 
 
 def _adj(m_sim, eps, using_similarity=False):
+    """Compute the adjacency matrix based on a similarity/distance threshold.
+
+    Parameters
+    ----------
+    m_sim : array-like
+        The similarity (or distance) matrix between samples.
+    eps : float
+        The threshold value. If `using_similarity` is True, pairs with
+        similarity >= `eps` are considered neighbors. Otherwise, pairs with
+        distance <= `eps` are considered neighbors.
+    using_similarity : bool, default=False
+        If True, `m_sim` is treated as a similarity matrix.
+        If False, `m_sim` is treated as a distance matrix.
+
+    Returns
+    -------
+    m_adj : array-like
+        The boolean adjacency matrix where True indicates neighboring points.
+    """
     if using_similarity:
         m_adj = m_sim >= eps
     else:
@@ -12,15 +31,84 @@ def _adj(m_sim, eps, using_similarity=False):
 
 
 def _dens(m_adj, xp=np):
+    """Calculate the density of each point based on its adjacency matrix.
+
+    The density is defined as the number of neighbors for each point.
+
+    Parameters
+    ----------
+    m_adj : array-like
+        The boolean adjacency matrix.
+    xp : module, default=numpy
+        The array module to use (e.g., numpy or cupy).
+
+    Returns
+    -------
+    densities : array-like
+        An array containing the density (number of neighbors) for each point.
+    """
     return xp.sum(m_adj, axis=1)
 
 
 def epsilon_neighbourhood_density(m_sim, eps, using_similarity=False, xp=np):
+    """Calculate the density of points within an epsilon-neighborhood.
+
+    This function first computes an adjacency matrix based on the epsilon
+    threshold and then calculates the density for each point.
+
+    Parameters
+    ----------
+    m_sim : array-like
+        The similarity (or distance) matrix between samples.
+    eps : float
+        The threshold value for defining the neighborhood.
+    using_similarity : bool, default=False
+        If True, `m_sim` is treated as a similarity matrix.
+        If False, `m_sim` is treated as a distance matrix.
+    xp : module, default=numpy
+        The array module to use (e.g., numpy or cupy).
+
+    Returns
+    -------
+    densities : array-like
+        An array containing the density for each point.
+    """
     m_adj = _adj(m_sim, eps, using_similarity)
     return _dens(m_adj, xp)
 
 
 def _dbscan(m_sim, eps, threshold, l_dens=None, using_similarity=False):
+    """Perform DBSCAN clustering.
+
+    Core implementation of the DBSCAN algorithm. It identifies core points,
+    builds clusters from them, and assigns other points to clusters or
+    marks them as noise.
+
+    Parameters
+    ----------
+    m_sim : array-like
+        The similarity (or distance) matrix between samples. Shape (n_samples, n_samples).
+    eps : float
+        The maximum distance (or minimum similarity) between two samples for
+        one to be considered as in the neighborhood of the other.
+    threshold : int
+        The number of samples in a neighborhood for a point to be considered
+        as a core point. This includes the point itself.
+    l_dens : array-like, optional
+        Precomputed densities for each point. If None, densities are computed
+        based on `m_sim` and `eps`. Shape (n_samples,).
+    using_similarity : bool, default=False
+        If True, `m_sim` is a similarity matrix (higher values are better).
+        If False, `m_sim` is a distance matrix (lower values are better).
+
+    Returns
+    -------
+    labels : array-like
+        Cluster labels for each point in the dataset. Noise points are given
+        the label -1. Shape (n_samples,).
+    n_components : int
+        The number of clusters found, excluding noise.
+    """
     xp, xpUtils = get_array_module(m_sim)
     n = m_sim.shape[0]
 
@@ -58,6 +146,30 @@ def _dbscan(m_sim, eps, threshold, l_dens=None, using_similarity=False):
 
 
 def dbscan(m_dis, eps, minPts):
+    """Perform DBSCAN clustering using a distance matrix.
+
+    User-friendly interface for DBSCAN clustering.
+
+    Parameters
+    ----------
+    m_dis : array-like
+        Distance matrix between samples. Shape (n_samples, n_samples).
+    eps : float
+        The maximum distance between two samples for one to be considered
+        as in the neighborhood of the other.
+    minPts : int
+        The number of samples in a neighborhood for a point to be considered
+        as a core point. This includes the point itself. Corresponds to
+        `threshold` in `_dbscan`.
+
+    Returns
+    -------
+    labels : array-like
+        Cluster labels for each point in the dataset. Noise points are given
+        the label -1.
+    n_components : int
+        The number of clusters found, excluding noise.
+    """
     labels, n_components = _dbscan(
         m_dis, eps, minPts, l_dens=None, using_similarity=False
     )
@@ -80,6 +192,37 @@ class DBSCAN(BaseEstimator, ClusterMixin):
         dtype=np.float32,
         **kwargs
     ):
+        """Initialize the DBSCAN estimator.
+
+        Parameters
+        ----------
+        eps : float
+            The maximum distance (or minimum similarity if using certain isolation models)
+            between two samples for one to be considered as in the neighborhood of the other.
+            This is used to determine the neighborhood of points.
+        core_threshold : int
+            The number of samples in a neighborhood for a point to be considered as a core point.
+            This includes the point itself. This is equivalent to `minPts` in traditional DBSCAN.
+        psi : int
+            Sample size parameter, often used by the underlying isolation models.
+            The exact meaning can vary depending on the `isolation_model_name`.
+        isolation_model_name : str, optional
+            The name of the isolation model to use for calculating similarity or density.
+            If None, standard Euclidean distance is typically used.
+            Examples: "anne", "iforest", "isotropic".
+        use_alpha_neighbourhood_mass : bool, default=True
+            If True and an `isolation_model_name` is provided, the model's
+            similarity measure (alpha neighbourhood mass) is used.
+            The `eps` parameter will then apply to this similarity.
+        use_anomaly_score : bool, default=False
+            If True and an `isolation_model_name` is provided (and
+            `use_alpha_neighbourhood_mass` is False), the model's anomaly scores
+            are used as densities.
+        dtype : type, default=np.float32
+            The data type for calculations.
+        **kwargs : dict
+            Additional keyword arguments passed to the underlying isolation model constructor.
+        """
         self.eps = eps
         self.core_threshold = core_threshold
         self.isolation_model_name = isolation_model_name
@@ -113,6 +256,24 @@ class DBSCAN(BaseEstimator, ClusterMixin):
         return
 
     def fit(self, X, y=None):
+        """Fit the DBSCAN model to the dataset X.
+
+        Computes or prepares the similarity/distance matrix and densities
+        required for the DBSCAN algorithm. If an isolation model is used,
+        it is fitted to X.
+
+        Parameters
+        ----------
+        X : array-like
+            Input data. Shape (n_samples, n_features).
+        y : Ignored
+            Not used, present for API consistency by convention.
+
+        Returns
+        -------
+        self : object
+            Returns the instance itself.
+        """
         xp, xpUtils = get_array_module(X)
         self.X_ = xpUtils.cast(X, dtype=self.dtype)
 
@@ -148,9 +309,38 @@ class DBSCAN(BaseEstimator, ClusterMixin):
         return self
 
     def predict(self, X, y=None):
+        """Perform clustering on X and return cluster labels.
+
+        Predicts the cluster labels for the data points in X.
+        Currently, this method expects X to be the same data that was used
+        during fitting, or None. Predicting on new, unseen data is not
+        supported by the current implementation.
+
+        Parameters
+        ----------
+        X : array-like or None
+            Input data. Shape (n_samples, n_features). If None, it uses the
+            data passed during `fit`. If not None, it must be identical to
+            the data used in `fit`.
+        y : Ignored
+            Not used, present for API consistency by convention.
+
+        Returns
+        -------
+        labels : array-like
+            Cluster labels for each point in X. Noise points are given
+            the label -1. Shape (n_samples,).
+
+        Raises
+        ------
+        NotImplementedError
+            If `X` is provided and is different from the data used in `fit`.
+        """
         xp, _ = get_array_module(self.X_)
         if X is not None and xp.any(self.X_ != X):
-            raise NotImplementedError()
+            raise NotImplementedError(
+                "Predicting on new data (X different from fit data) is not implemented."
+            )
 
         using_similarity = (
             self.isolation_model is not None and self.use_alpha_neighbourhood_mass
@@ -161,126 +351,22 @@ class DBSCAN(BaseEstimator, ClusterMixin):
         return y
 
     def fit_predict(self, X, y=None):
+        """Fit the model and return cluster labels for the same data.
+
+        A convenience method that first calls `fit(X, y)` and then
+        `predict(X=None, y=y)`.
+
+        Parameters
+        ----------
+        X : array-like
+            Input data. Shape (n_samples, n_features).
+        y : Ignored
+            Not used, present for API consistency by convention.
+
+        Returns
+        -------
+        labels : array-like
+            Cluster labels for each point in X. Noise points are given
+            the label -1. Shape (n_samples,).
+        """
         return self.fit(X, y).predict(X=None)
-
-
-if __name__ == "__main__":
-    from Common import ball_scale
-
-    np.set_printoptions(precision=4, suppress=True, linewidth=150)
-    xp = np
-
-    # import os
-    # import tensorflow as tf
-
-    # os.environ["TF_CPP_MIN_LOG_LEVEL"] = "5"
-    # tnp = tf.experimental.numpy
-    # tnp.experimental_enable_numpy_behavior()
-    # xp = tnp
-
-    X = xp.array(
-        [[-5.1, -5.1], [-4.6, -4.6], [-1.1, -1.1], [-0.6, -0.8], [6.6, 6.6]],
-        dtype=np.float64,
-    )
-    y_true = xp.array([1, 1, 2, 2, -1])
-    X_ball = ball_scale(X)
-
-    from joblib import Parallel
-
-    np.set_printoptions(precision=2)
-
-    isolation_models = [None] + [e.value for e in IsolationModel]
-
-    params = {
-        "l2_similarity": (1, 2, None),
-        "anne_similarity": (0.8, 2, 2),
-        "soft_anne_similarity": (0.8, 2, 2),
-        "inne_similarity": (0.2, 2, 2),
-        "isotropic_similarity": (0.1, 2, 2),
-        "iforest_similarity": (0.8, 2, 2),
-        "anne_anomaly": (0.8, -3, 2),
-        "soft_anne_anomaly": (0.8, -3, 2),
-        "inne_anomaly": (0.8, -0.4, 2),
-        "iforest_anomaly": (1, 1.59, 3),
-        "anne_mass": (0.8, 2.5, 2),
-        "soft_anne_mass": (0.8, 2.5, 2),
-        "inne_mass": (1, 1, 2),
-        "isotropic_mass": (1, 2, 3),
-        "iforest_mass": (1, 2.5, 2),
-    }
-    # isotropic_anomaly does not exist.
-
-    with Parallel(n_jobs=32, prefer="threads") as parallel:
-        for name in params:
-
-            splits = name.split("_")
-            model_name = "_".join(splits[:-1])
-            suffix = splits[len(splits) - 1]
-
-            eps, minPts, psi = params[name]
-
-            rotation = False  # Tired to tune rotated iforest
-
-            X_ = (
-                X_ball
-                if rotation
-                and model_name is not None
-                and model_name.startswith("iforest")
-                else X
-            )
-
-            if suffix == "similarity":
-                m = DBSCAN(
-                    eps,
-                    minPts,
-                    psi,
-                    isolation_model_name=None if model_name == "l2" else model_name,
-                    use_alpha_neighbourhood_mass=True,
-                    rotation=rotation,
-                    parallel=parallel,
-                )
-                labels = m.fit_predict(X_)
-                print(
-                    model_name
-                    + (
-                        "_epsilon_neighbourhood"
-                        if model_name == "l2"
-                        else "_alpha_neighbourhood"
-                    ),
-                    ">>",
-                    labels,
-                )
-                if not xp.all(labels == y_true):
-                    print("Wrong results!")
-
-            if suffix == "anomaly":
-                m = DBSCAN(
-                    eps,
-                    minPts,
-                    psi,
-                    isolation_model_name=model_name,
-                    use_alpha_neighbourhood_mass=False,
-                    use_anomaly_score=True,
-                    rotation=rotation,
-                    parallel=parallel,
-                )
-                labels = m.fit_predict(X_)
-                print(model_name + "_anomaly", ">>", labels)
-                if not xp.all(labels == y_true):
-                    print("Wrong results!")
-
-            if suffix == "mass":
-                m = DBSCAN(
-                    eps,
-                    minPts,
-                    psi,
-                    isolation_model_name=model_name,
-                    use_alpha_neighbourhood_mass=False,
-                    use_anomaly_score=False,
-                    rotation=rotation,
-                    parallel=parallel,
-                )
-                labels = m.fit_predict(X_)
-                print(model_name + "_mass", ">>", labels)
-                if not xp.all(labels == y_true):
-                    print("Wrong results!")
